@@ -9,106 +9,64 @@ import time
 from IPython import display
 from stylegan2_generator import StyleGan2Generator
 #%%
+resolution = 1024
 def resize_image(image):
-    print(image)
-    return tf.image.resize(image,(64,64))
+    return tf.image.resize(image,(resolution,resolution))
 
 buffer_size = 100
-batch_size =2
-x_train = (tf.keras.utils.image_dataset_from_directory("C:/SAMUEL/Centrale/Automatants/anime_face/",labels=None)
+batch_size =18
+x_train = (tf.keras.utils.image_dataset_from_directory("C:/SAMUEL/Centrale/Automatants/anime_face/",labels=None,batch_size=batch_size)    
     .map(resize_image)
     .shuffle(buffer_size)
 )
 # %%
-def define_encoder(im_shape,latent_dim):
+def define_encoder(im_shape):
     input = models.Input(shape=im_shape)
     x = kl.Conv2D(32,3,2,activation='relu',kernel_initializer='random_normal')(input)
     x = kl.Conv2D(64,3,2,activation='relu',kernel_initializer='random_normal')(x)
     x = kl.Conv2D(128,3,2,activation='relu',kernel_initializer='random_normal')(x)
-    x = kl.Conv2D(256,3,2,activation='relu',kernel_initializer='random_normal')(x)
+    #x = kl.Conv2D(256,3,2,activation='relu',kernel_initializer='random_normal')(x)
     x = kl.Flatten()(x)
-    x1 = kl.Dense(latent_dim)(x)
-    x2 = kl.Dense(latent_dim)(x)
-    x = kl.Dense(latent_dim + latent_dim)(x)
+    x = kl.Dense(dlatent_vector*512)(x)
+    x = kl.Reshape((dlatent_vector,512))(x)
     return models.Model(input,x)
 
-decoder = StyleGan2Generator(resolution=64,impl='ref')
-
-class VAE(models.Model):
-    def __init__(self,latent_dim,im_shape,decoder):
-        super().__init__()
-        self.latent_dim = latent_dim
-        self.encoder = define_encoder(im_shape,latent_dim)
-        self.decoder = decoder
-
-    def sample(self,eps=None):
-        if eps is None:
-            eps = tf.random.normal(shape=(100,self.latent_dim))
-        return self.decode(eps,apply_sigmoid=True)
-
-    def encode(self,x):
-        mean,logvar=tf.split(self.encoder(x), num_or_size_splits=2, axis=1)
-        return mean,logvar
-
-    def reparametrize(self,mean,logvar):
-        eps = tf.random.normal(shape=mean.shape)
-        return eps * tf.exp(logvar*0.5)+mean
-
-    def decode(self,z,apply_sigmoid=False):
-        logits = self.decoder(z)
-        if apply_sigmoid:
-            probs = tf.sigmoid(logits)
-            return probs
-        return logits
+dlatent_vector = (int(np.log2(resolution))-1)*2
+weights_name = 'ffhq' 
+generator = StyleGan2Generator(weights=weights_name, impl='ref')
+decoder = generator.synthesis_network
 # %%
 opt = keras.optimizers.Adam(1e-4)
 
-def log_normal_pdf(sample,mean,logvar,raxis=1):
-    log2pi = tf.math.log(2.*np.pi)
-    res1 = tf.reduce_sum(-.5*((sample-mean)**2. * tf.exp(-logvar) + logvar + log2pi),axis=raxis)
-    res2 = 0.5 * tf.reduce_sum(tf.exp(logvar) - logvar - 1 + mean**2)
-    return res1
-
-def compute_loss(model,x):
-    mean,logvar = model.encode(x)
-    z = model.reparametrize(mean,logvar)
-    x_logit = model.decode(z)
-    cross_ent = tf.nn.sigmoid_cross_entropy_with_logits(logits=x_logit,labels=x)
-    logpx_z = -tf.reduce_sum(cross_ent,axis=[1,2,3])
-    logpz = log_normal_pdf(z,0.,0.)
-    logqz_x = log_normal_pdf(z,mean,logvar)
-    return - tf.reduce_mean(logpx_z + logpz - logqz_x)
-
 def train_step(model,x,opt):
     with tf.GradientTape() as tape:
-        loss = compute_loss(model,x)
+        z = model(x)
+        xp = decoder(z)
+        xp = tf.reshape(xp,(tf.shape(xp)[0],tf.shape(xp)[3],tf.shape(xp)[2],tf.shape(xp)[1]))
+        loss = keras.losses.MSE(x,xp)
     gradients = tape.gradient(loss,model.trainable_variables)
     opt.apply_gradients(zip(gradients,model.trainable_variables))
     return loss
 # %%
 epochs = 10
-latent_dim = 128
 num_examples_to_generate = 2
-im_shape = (64,64,3)
-seed = tf.random.normal(shape=[num_examples_to_generate,latent_dim])
-model = VAE(latent_dim,im_shape,decoder)
+im_shape = (resolution,resolution,3)
+seed = tf.random.normal(shape=[num_examples_to_generate,512])
+model = define_encoder(im_shape)
 # %%
-def generate_images(model,epoch,test_sample):
-    mean,logvar = model.encode(test_sample)
-    z = model.reparametrize(mean,logvar)
-    predictions = model.sample(z)
+def generate_images(model,test_sample):
+    z = model(test_sample)
+    predictions = decoder(z)
     fig = plt.figure(figsize=(10,10))
-
     for i in range(predictions.shape[0]):
         plt.subplot(4,4,i+1)
         plt.imshow(tf.transpose(predictions[i])*0.5+0.5)
         plt.axis('off')
     plt.show()
 
-assert batch_size >= num_examples_to_generate
 for test_batch in x_train.take(1):
-    test_sample = test_batch[0:2,:,:,:]
-generate_images(model,0,test_sample)
+    test_sample = test_batch[0:1,:,:,:]
+generate_images(model,test_sample)
 # %%
 for epoch in range(1,epochs+1+30):
     start_time = time.time()
@@ -116,7 +74,7 @@ for epoch in range(1,epochs+1+30):
         loss = train_step(model,batch,opt)
     end_time = time.time()
     display.clear_output(wait=False)
-    generate_images(model,epoch,test_sample)
+    generate_images(model,test_sample)
     print(f'Epoch {epoch}, Loss : {loss}')
 # %%
 model.encoder.save_weights('encoder_weights.h5')
