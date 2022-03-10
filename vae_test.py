@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import time
 from IPython import display
 from stylegan2_generator import StyleGan2Generator
+from stylegan2_discriminator import StyleGan2Discriminator
 #%%
 resolution = 1024
 def resize_image(image):
@@ -35,6 +36,7 @@ dlatent_vector = (int(np.log2(resolution))-1)*2
 weights_name = 'ffhq' 
 generator = StyleGan2Generator(weights=weights_name, impl='ref')
 decoder = generator.synthesis_network
+disc = StyleGan2Discriminator(impl='ref')
 # %%
 opt = keras.optimizers.Adam(1e-4)
 
@@ -42,8 +44,11 @@ def train_step(model,x,opt):
     with tf.GradientTape() as tape:
         z = model(x)
         xp = decoder(z)
+        y = disc(xp)
+        adloss = tf.keras.losses.BinaryCrossentropy(from_logits=True)(y,tf.ones_like(y))
         xp = tf.reshape(xp,(tf.shape(xp)[0],tf.shape(xp)[3],tf.shape(xp)[2],tf.shape(xp)[1]))
-        loss = keras.losses.MSE(x,xp)
+        mseloss = keras.losses.MSE(x,xp)
+        loss = adloss + mseloss
     gradients = tape.gradient(loss,model.trainable_variables)
     opt.apply_gradients(zip(gradients,model.trainable_variables))
     return loss
