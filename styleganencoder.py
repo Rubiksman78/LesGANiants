@@ -120,12 +120,13 @@ def train_step(model,x,opt):
         xp = tf.reshape(xp,(tf.shape(xp)[0],tf.shape(xp)[3],tf.shape(xp)[2],tf.shape(xp)[1]))
         xp = tf.image.resize(xp,(64,64))
         adloss = tf.keras.losses.BinaryCrossentropy(from_logits=True)(y,tf.ones_like(y))
-        loss = tf.reduce_mean(keras.losses.MSE(x,xp)) + adloss
+        vgg_loss = VGGFeatureMatchingLoss()(x,xp)
+        loss = tf.reduce_mean(keras.losses.MSE(x,xp)) + adloss + vgg_loss
     gradients = tape.gradient(loss,model.trainable_variables)
     opt.apply_gradients(zip(gradients,model.trainable_variables))
     return loss
 
-for epoch in range(1,epochs+1+30):
+for epoch in range(1,epochs):
     start_time = time.time()
     for batch in x_train:
         loss = train_step(model,batch,opt)
