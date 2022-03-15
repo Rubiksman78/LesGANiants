@@ -38,6 +38,13 @@ x_train = (tf.keras.utils.image_dataset_from_directory("/content/drive/MyDrive/C
     .shuffle(buffer_size)
 )
 
+def resnet_block(input,filters,kernel,stride):
+    x1 = kl.Con2D(filters,kernel,stride=stride,padding='same')(input)
+    x2 = kl.Conv2D(filters,1,padding='same')(input)
+    output = kl.Add()([x1,x2])
+    return output
+
+##Modifier l'architecture ResNet voir EfficientNet et se placer directement dans le W-space
 def define_encoder(im_shape):
     input = models.Input(shape=im_shape)
     x = kl.Conv2D(32,3,2,activation='relu',kernel_initializer='random_normal')(input)
@@ -45,8 +52,8 @@ def define_encoder(im_shape):
     x = kl.Conv2D(128,3,2,activation='relu',kernel_initializer='random_normal')(x)
     x = kl.Conv2D(256,3,2,activation='relu',kernel_initializer='random_normal')(x)
     x = kl.Flatten()(x)
-    x = kl.Dense(512)(x)
-    return models.Model(input,x)
+    out = [kl.Dense(512)(x) for _ in range(18)]
+    return models.Model(input,out)
 
 dlatent_vector = (int(np.log2(resolution))-1)*2
 weights_name = 'ffhq' 
