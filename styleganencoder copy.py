@@ -9,9 +9,8 @@ import time
 from IPython import display
 from stylegan2_generator import StyleGan2Generator
 from stylegan2_discriminator import StyleGan2Discriminator
-from PIL import Image
-import cv2
-
+from utils.utils_stylegan2 import convert_images_to_uint8
+#%%
 resolution = 64
 def resize_image(image):
     return tf.image.resize(image,(resolution,resolution))
@@ -25,12 +24,6 @@ x_train = (tf.keras.utils.image_dataset_from_directory("../Datasets/CeterisParib
     .shuffle(buffer_size)
 )
 
-def resnet_block(input,filters,kernel,stride):
-    x1 = kl.Con2D(filters,kernel,stride=stride,padding='same')(input)
-    x2 = kl.Conv2D(filters,1,padding='same')(input)
-    output = kl.Add()([x1,x2])
-    return output
-
 ##Modifier l'architecture ResNet voir EfficientNet et se placer directement dans le W-space
 res_net = tf.keras.applications.ResNet50V2(
     input_shape = shape,
@@ -40,6 +33,7 @@ res_net = tf.keras.applications.ResNet50V2(
 def define_encoder(im_shape):
     input = models.Input(shape=im_shape)
     x = res_net(input)
+    x = kl.Conv2D(128,3,strides=2,padding='same')(x)
     x = kl.Flatten()(x)
     x = [kl.Dense(512)(x) for _ in range(18)]
     out = tf.stack(x,axis=1)
@@ -50,33 +44,32 @@ model.summary()
 #%%
 dlatent_vector = (int(np.log2(resolution))-1)*2
 weights_name = 'ffhq' 
-generator = StyleGan2Generator(resolution=resolution,weights=weights_name, impl='ref')
-decoder = generator
-disc = StyleGan2Discriminator(resolution=resolution,weights=weights_name, impl='ref')
+generator = StyleGan2Generator(resolution=1024,weights=weights_name, impl='ref')
+decoder = generator.synthesis_network
+disc = StyleGan2Discriminator(resolution=1024,weights=weights_name, impl='ref')
 
 opt = keras.optimizers.Adam(1e-4)
-
+#%%
 epochs = 10
 num_examples_to_generate = 2
 im_shape = (resolution,resolution,3)
 seed = tf.random.normal(shape=[num_examples_to_generate,512])
 model = define_encoder(im_shape)
-
+#%%
 def generate_images(model,test_sample):
     z = model(test_sample)
     predictions = decoder(z)
+    predictions = convert_images_to_uint8(predictions, nchw_to_nhwc=True, uint8_cast=True)
     fig = plt.figure(figsize=(15,15))
     for i in range(predictions.shape[0]):
         grid_row = min(predictions.shape[0], 2)
-        f, axarr = plt.subplots(grid_row, 2, figsize=(18, grid_row * 6))
+        f, ax = plt.subplots(grid_row, 2, figsize=(18, grid_row * 6))
         for row in range(grid_row):
-            im = tf.transpose(predictions[i]).numpy()
-            im = im.swapaxes(-3,-2)[...,::]
-            ax = axarr
-            ax[0].imshow(im*0.5+0.5)
+            im = predictions[i]
+            ax[0].imshow(im)
             ax[0].axis("off")
             ax[0].set_title("Reconstructed", fontsize=20)
-            ax[1].imshow(test_sample[0]/255)
+            ax[1].imshow(tf.cast(test_sample[0],dtype='uint8'))
             ax[1].axis("off")
             ax[1].set_title("Origin", fontsize=20)
     plt.show()
@@ -85,6 +78,7 @@ for test_batch in x_train.take(1):
     test_sample = test_batch[0:5,:,:,:]
 generate_images(model,test_sample)
 
+#%%
 class VGGFeatureMatchingLoss(keras.losses.Loss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -136,3 +130,4 @@ for epoch in range(1,epochs):
     print(f'Epoch {epoch}, Loss : {loss}')
 
 model.encoder.save_weights('encoder_weights.h5')
+# %%
